@@ -17,7 +17,10 @@ data_transform = transforms.Compose(
      transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
 channel_clamps = {
-    0: {"min": -2.1179, "max": 2.2489},  # channel 0 (R)    1: {"min": -2.0357, "max": 2.4285},  # channel 1 (G)    2: {"min": -1.8044, "max": 2.64}  # channel 2 (B)}
+    0: {"min": -2.1179, "max": 2.2489},  # channel 0 (R)
+    1: {"min": -2.0357, "max": 2.4285},  # channel 1 (G)
+    2: {"min": -1.8044, "max": 2.64}  # channel 2 (B)
+}
 
 
 def map_to_224x224(input_matrix, n, output_channels=3):
