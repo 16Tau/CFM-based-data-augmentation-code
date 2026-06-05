@@ -23,29 +23,36 @@ channel_clamps = {
 }
 
 
-
 def map_to_224x224(input_matrix, n, output_channels=3):
     """
-    Map n x n matrix to 224 x 224 (single channel) or 3 x 224 x 224 (three channels) matrix.    Parameters:
+    Map n x n matrix to 224 x 224 (single channel) or 3 x 224 x 224 (three channels) matrix.
+    
+    Parameters:
         input_matrix: Input matrix with shape (n, n)
-        n: Dimension of input matrix        output_channels: Number of output channels (1 or 3)    Returns:
-        output_matrix: Matrix with shape (output_channels, 224, 224)    """
+        n: Dimension of input matrix
+        output_channels: Number of output channels (1 or 3)
+    
+    Returns:
+        output_matrix: Matrix with shape (output_channels, 224, 224)
+    """
     assert input_matrix.shape == (n, n), f"Input matrix shape must be({n}, {n})"
 
-    # # Initialize output matrix    if output_channels == 1:
+    # Initialize output matrix
+    if output_channels == 1:
         output_matrix = np.zeros((224, 224), dtype=np.float32)
     else:
         output_matrix = np.zeros((output_channels, 224, 224), dtype=np.float32)
 
-    # # Use np.array_split indices for non-uniform division
+    # Use np.array_split indices for non-uniform division
     h_splits = np.array_split(range(224), n)
     w_splits = np.array_split(range(224), n)
 
     for i in range(n):
         for j in range(n):
-            # # Calculate index range for current block            h_start, h_end = h_splits[i][0], h_splits[i][-1] + 1
+            # Calculate index range for current block
+            h_start, h_end = h_splits[i][0], h_splits[i][-1] + 1
             w_start, w_end = w_splits[j][0], w_splits[j][-1] + 1
-            # # Fill corresponding block with input_matrix[i, j] value
+            # Fill corresponding block with input_matrix[i, j] value
             if output_channels == 1:
                 output_matrix[h_start:h_end, w_start:w_end] = input_matrix[i, j]
             else:
@@ -57,7 +64,8 @@ def map_to_224x224(input_matrix, n, output_channels=3):
 
 def split_into_blocks(matrix, n):
     """
-    Non-uniformly divide matrix into n x n blocks.    """
+    Non-uniformly divide matrix into n x n blocks.
+    """
     assert matrix.shape == (3, 224, 224), "Input matrix shape must be(3, 224, 224)"
 
     # Divide height and width
@@ -129,7 +137,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class CFM(Attack):
     def __init__(self, model, eps=float(np.sqrt((8 ** 2) * 3 * 224 * 224)), alpha=1 / 255, steps=10, random_start=True,
                  vcr=0.9, mask=np.zeros((3, 224, 224), dtype=np.float32)):
-        super().__init__("IFGSM", model)
+        super().__init__("CFM", model)
         self.eps = eps
         self.alpha = alpha
         self.steps = steps
@@ -152,8 +160,8 @@ class CFM(Attack):
         adv_images = images.clone().detach()
         mask = torch.from_numpy(self.mask).to(device)
 
-        specific_values = [-0.017, 0,0.017]
-        specific_values = [-0.1, 0,0.1]
+        specific_values = [-0.017, 0, 0.017]
+        specific_values = [-0.1, 0, 0.1]
         adv_image_transform_matrix = actual_image_transform_matrix.copy()
 
         for _ in range(self.steps):
@@ -161,7 +169,8 @@ class CFM(Attack):
             outputs = self.get_logits(adv_images)
             cost_top2 = loss(outputs, labels_top2)
 
-            # # First gradient calculation            outputs = self.get_logits(adv_images)
+            # First gradient calculation
+            outputs = self.get_logits(adv_images)
             cost = loss(outputs, labels)
             grad = torch.autograd.grad(
                 cost, adv_images, retain_graph=False, create_graph=False
@@ -188,20 +197,21 @@ class CFM(Attack):
                     splited_grad_max[i][j] = np.average(splited_grad[i][j])
                     splited_top2_grad_max[i][j] = np.average(splited_top2_grad[i][j])
 
-            # # Use Z3 optimizer            solver = z3.Optimize()
+            # Use Z3 optimizer
+            solver = z3.Optimize()
             variables = [[0 for j in range(parts)] for i in range(parts)]
 
             # Define absolute value sum
             abs_sum = z3.Sum([z3.Abs(variables[i][j]) for i in range(parts) for j in range(parts)])
 
-            # solver.reset()
             for i in range(parts):
                 for j in range(parts):
                     var = z3.Real(f'x_{i}_{j}')
                     variables[i][j] = var
                     value_constraints = [var == val for val in specific_values]
                     solver.add(z3.Or(value_constraints))
-                    if splited_grad_max[i][j] != splited_top2_grad_max[i][j]:  # # Avoid 0 > 0 contradiction                        solver.add(var * splited_grad_max[i][j] > var * splited_top2_grad_max[i][j])
+                    if splited_grad_max[i][j] != splited_top2_grad_max[i][j]:
+                        solver.add(var * splited_grad_max[i][j] > var * splited_top2_grad_max[i][j])
 
             # Add minimization objective
             solver.minimize(abs_sum)
@@ -217,34 +227,37 @@ class CFM(Attack):
                             var_value = float(model[var].as_decimal(prec=10).rstrip('?'))
                         else:
                             var_value = 0.0
-                        # if (i + 1) % 2 == 0 and (j + 1) % 2 == 0:
                         result_matrix[i][j] = var_value
 
-                # # Map to 224x224
+                # Map to 224x224
                 mapped_var = map_to_224x224(result_matrix, parts, 1)
                 adv_image_transform_matrix = adv_image_transform_matrix.copy()
 
-                # # Modified part: Calculate boundaries for non-uniform block division
+                # Modified part: Calculate boundaries for non-uniform block division
                 h_splits = np.array_split(range(224), parts)
                 w_splits = np.array_split(range(224), parts)
 
-                # # Gaussian blur parameters: sigma can be adjusted as needed (set to 1.0 here for moderate blur strength)
+                # Gaussian blur parameters: sigma can be adjusted as needed
                 sigma = 2.0
 
-                # # Block-level processing: Apply Gaussian blur to blocks where result_matrix[i][j] > 0                for blk_i in range(parts):
+                # Block-level processing: Apply Gaussian blur to blocks where result_matrix[i][j] > 0
+                for blk_i in range(parts):
                     for blk_j in range(parts):
                         if result_matrix[blk_i][blk_j] > 0:
-                            # # Get current block boundaries
+                            # Get current block boundaries
                             h_start, h_end = h_splits[blk_i][0], h_splits[blk_i][-1] + 1
                             w_start, w_end = w_splits[blk_j][0], w_splits[blk_j][-1] + 1
 
-                            # # Apply Gaussian blur to each channel
+                            # Apply Gaussian blur to each channel
                             for k in range(3):
-                                # # Extract current block region                                block_region = adv_image_transform_matrix[k, h_start:h_end, w_start:w_end].copy()
+                                # Extract current block region
+                                block_region = adv_image_transform_matrix[k, h_start:h_end, w_start:w_end].copy()
 
-                                # # Apply Gaussian blur (order=0 for 2D blur)                                blurred_block = gaussian_filter(block_region, sigma=sigma, order=0)
+                                # Apply Gaussian blur (order=0 for 2D blur)
+                                blurred_block = gaussian_filter(block_region, sigma=sigma, order=0)
 
-                                # # Put blurred block back to original matrix                                adv_image_transform_matrix[k, h_start:h_end, w_start:w_end] = blurred_block
+                                # Put blurred block back to original matrix
+                                adv_image_transform_matrix[k, h_start:h_end, w_start:w_end] = blurred_block
 
                 m = (adv_image_transform_matrix == actual_image_transform_matrix)
 
@@ -259,25 +272,26 @@ class CFM(Attack):
                     device=device
                 ).unsqueeze(0)
                 adv_images.requires_grad = True
+
+                delta = adv_images - images
+
+                # Tampering intensity is 32
+                delta[0][0] = torch.clamp(adv_images[0][0] - images[0][0], min=-0.54799, max=0.54799)
+                delta[0][1] = torch.clamp(adv_images[0][1] - images[0][1], min=-0.56021, max=0.56021)
+                delta[0][2] = torch.clamp(adv_images[0][2] - images[0][2], min=-0.55772, max=0.55772)
+
+                adv_image = adv_images.squeeze(0).cpu()
+                adv_image = con_transform(actual_image_transform_matrix, adv_image, actual_image_matrix)
+
+                iterative_image_top1_label, x = predict_image_from_rgb_matrices(
+                    adv_image[0], adv_image[1], adv_image[2],
+                    json_absolute_path, weights_path, 0, model_current
+                )
+                if iterative_image_top1_label != labels:
+                    return adv_image
             elif check_result == z3.unsat:
                 break
             else:
                 break
 
-            delta = adv_images - images
-
-            # Tampering intensity is 32
-            delta[0][0] = torch.clamp(adv_images[0][0] - images[0][0], min=-0.54799, max=0.54799)
-            delta[0][1] = torch.clamp(adv_images[0][1] - images[0][1], min=-0.56021, max=0.56021)
-            delta[0][2] = torch.clamp(adv_images[0][2] - images[0][2], min=-0.55772, max=0.55772)
-
-            adv_image = adv_images.squeeze(0).cpu()
-            adv_image = con_transform(actual_image_transform_matrix, adv_image, actual_image_matrix)
-
-            iterative_image_top1_label, x = predict_image_from_rgb_matrices(
-                adv_image[0], adv_image[1], adv_image[2],
-                json_absolute_path, weights_path, 0, model_current
-            )
-            if iterative_image_top1_label != labels:
-                return adv_image
-            return adv_image
+        return adv_image
